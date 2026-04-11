@@ -3,17 +3,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vault Node — Mylinks</title>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script type="module">
-  // Import the functions you need from the SDKs you need
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import { getDatabase, ref, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getDatabase, ref, push, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  // Your web app's Firebase configuration
-  const firebaseConfig = {
+  const config = {
     apiKey: "AIzaSyD9v8tKBmSU9vqqgBO34yBMRrbHcFZFAs0",
     authDomain: "yoshiuniverse-6e0c9.firebaseapp.com",
     databaseURL: "https://yoshiuniverse-6e0c9-default-rtdb.firebaseio.com",
@@ -23,152 +19,193 @@
     appId: "1:645597342267:web:77b3b632310f86e198ca1e"
   };
 
-  // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
+  const app = initializeApp(config);
   const auth = getAuth(app);
   const db = getDatabase(app);
 
-  onAuthStateChanged(auth, (user) => {
-    const login = document.getElementById('login-zone');
-    const vault = document.getElementById('vault-zone');
+  onAuthStateChanged(auth, user => {
+    const authView = document.getElementById('vault-auth');
+    const mainView = document.getElementById('vault-main');
+    
     if (user) {
-      login.style.display = 'none';
-      vault.style.display = 'block';
-      loadVault(user.uid);
+      authView.style.display = 'none';
+      mainView.style.display = 'block';
+      
+      const userLinksRef = ref(db, `users/${user.uid}/links`);
+      onValue(userLinksRef, (snap) => {
+        const feed = document.getElementById('vault-feed');
+        feed.innerHTML = '';
+        snap.forEach(child => {
+          const d = child.val();
+          const card = document.createElement('div');
+          card.className = 'vault-card';
+          const isCode = d.anonLink.trim().startsWith('<');
+          
+          card.innerHTML = `
+            <div class="v-meta">ENCRYPTED_ENTRY: ${child.key.substring(0,6)}</div>
+            <div class="v-name">${d.name}</div>
+            ${isCode ? 
+              `<div class="v-code-preview"><code>RAW_SOURCE_ENCRYPTED</code></div>` : 
+              `<a href="${d.anonLink}" target="_blank" class="v-action-btn">DECRYPT_&_OPEN</a>`
+            }
+          `;
+          feed.appendChild(card);
+        });
+      });
     } else {
-      login.style.display = 'block';
-      vault.style.display = 'none';
+      authView.style.display = 'block';
+      mainView.style.display = 'none';
     }
   });
 
-  async function atlasVaultPurge(uid, id, url) {
-    if (!url || !url.startsWith('http')) return;
-    try {
-      await fetch(url, { mode: 'no-cors' });
-    } catch (err) {
-      // If the error is a network "Hardwall", purge the link
-      if (err instanceof TypeError || err.name === 'AbortError') {
-        remove(ref(db, `users/${uid}/links/${id}`));
-      }
-    }
-  }
-
-  function loadVault(uid) {
-    // Reference matches your Firebase Rules screenshot: users/$uid/links
-    onValue(ref(db, `users/${uid}/links`), (snap) => {
-      const list = document.getElementById('v-list');
-      list.innerHTML = '';
-      snap.forEach(child => {
-        const d = child.val();
-        const card = document.createElement('div');
-        card.className = 'v-card';
-        const isHtml = d.url.trim().startsWith('<');
-        
-        if (isHtml) {
-          card.innerHTML = `
-            <div class="v-header"><strong>${d.name}</strong> <span class="v-tag">VAULT_CODE</span></div>
-            <div class="v-html">${d.url}</div>
-          `;
-        } else {
-          card.innerHTML = `
-            <div class="v-header"><strong>${d.name}</strong> <span class="v-tag">VAULT_URL</span></div>
-            <small>${d.url}</small>
-            <div style="margin-top:10px"><a href="${d.url}" target="_blank" class="v-btn">OPEN VAULT</a></div>
-          `;
-          atlasVaultPurge(uid, child.key, d.url);
-        }
-        list.appendChild(card);
+  window.initAuth = () => {
+    const em = document.getElementById('vault-email').value;
+    const ps = document.getElementById('vault-pass').value;
+    if(em && ps) {
+      signInWithEmailAndPassword(auth, em, ps).catch(err => {
+        document.getElementById('auth-err').innerText = "AUTH_DENIED: INVALID_CREDENTIALS";
       });
-    });
-  }
-
-  window.authAction = (t) => {
-    const e = document.getElementById('e').value;
-    const p = document.getElementById('p').value;
-    if(t === 'in') signInWithEmailAndPassword(auth, e, p).catch(err => console.error(err.message));
-    else createUserWithEmailAndPassword(auth, e, p).catch(err => console.error(err.message));
+    }
   };
 
-  window.addVault = () => {
-    const n = document.getElementById('vn').value;
-    const u = document.getElementById('vu').value;
-    if(n && u && auth.currentUser) {
-      push(ref(db, `users/${auth.currentUser.uid}/links`), { 
-        name: n, 
-        url: u,
-        addedAt: Date.now() 
+  window.terminateSession = () => signOut(auth);
+
+  window.commitToVault = () => {
+    const n = document.getElementById('v-input-name').value;
+    const l = document.getElementById('v-input-link').value;
+    if(n && l && auth.currentUser) {
+      push(ref(db, `users/${auth.currentUser.uid}/links`), {
+        name: n,
+        anonLink: l,
+        addedAt: Date.now()
       });
-      document.getElementById('vn').value = '';
-      document.getElementById('vu').value = '';
+      document.getElementById('v-input-name').value = '';
+      document.getElementById('v-input-link').value = '';
     }
   };
 </script>
 <style>
   body { 
-    margin: 0; padding: 20px;
-    background: #020408 url('https://cdn.phototourl.com/free/2026-04-11-c6cf83a1-60bb-4ec1-98b5-5f8cf6cad7e7.png') center/cover fixed; 
-    color: #fff; font-family: 'Rajdhani', sans-serif;
+    margin: 0; padding: 20px; 
+    background: transparent; 
+    color: #fff; 
+    font-family: 'Rajdhani', sans-serif;
   }
-  .panel { 
-    background: rgba(13, 18, 32, 0.95); 
-    border: 1px solid #f59e0b; 
-    padding: 25px; 
-    border-radius: 12px; 
-    max-width: 450px; 
-    margin: 0 auto; 
-    backdrop-filter: blur(10px);
-    box-shadow: 0 0 30px rgba(0,0,0,0.5);
+
+  .vault-panel { 
+    background: rgba(25, 20, 10, 0.95); 
+    border: 1px solid rgba(245, 158, 11, 0.3); 
+    padding: 35px; 
+    border-radius: 14px; 
+    margin: 0 auto 30px auto; 
+    max-width: 480px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    /* Edge Fading */
+    mask-image: linear-gradient(to bottom, black 92%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 92%, transparent 100%);
   }
-  h2 { color:#f59e0b; margin-top:0; font-family: 'Share Tech Mono'; letter-spacing: 2px; }
+
+  .v-header {
+    font-family: 'Share Tech Mono', monospace;
+    color: #f59e0b;
+    font-size: 13px;
+    margin-bottom: 20px;
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
   input, textarea { 
-    width: 100%; background: #000; color: #f59e0b; border: 1px solid #302010; 
-    padding: 12px; margin: 8px 0; border-radius: 4px; box-sizing: border-box; 
-    font-family: 'Share Tech Mono'; 
+    width: 100%; 
+    background: #000; 
+    color: #f59e0b; 
+    border: 1px solid #443311; 
+    padding: 14px; 
+    margin: 10px 0; 
+    border-radius: 6px; 
+    box-sizing: border-box; 
+    font-family: 'Share Tech Mono';
+    font-size: 14px;
+    outline: none;
   }
-  textarea { height: 100px; resize: vertical; }
-  button { 
-    width: 100%; background: #f59e0b; color: #000; border: none; 
-    padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; 
-    margin-top: 10px; transition: 0.3s;
-  }
-  button:hover { background: #fff; box-shadow: 0 0 15px #f59e0b; }
-  .v-card { 
-    border-left: 3px solid #f59e0b; 
+
+  input:focus, textarea:focus { border-color: #f59e0b; }
+
+  .v-primary-btn { 
+    width: 100%; 
+    background: #f59e0b; 
+    color: #000;
+    border: none; 
     padding: 15px; 
-    margin-top: 10px; 
-    background: rgba(245,158,11,0.08); 
-    border-radius: 8px; 
-    backdrop-filter: blur(5px);
+    font-weight: 700; 
+    cursor: pointer; 
+    border-radius: 6px; 
+    font-family: 'Share Tech Mono';
+    text-transform: uppercase;
+    margin-top: 10px;
   }
-  .v-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-  .v-tag { font-size: 9px; padding: 2px 6px; background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 3px; }
-  .v-btn { 
-    display: inline-block; background: #f59e0b; color: #000; 
-    text-decoration: none; padding: 5px 15px; font-weight: bold; 
-    font-size: 12px; border-radius: 4px;
+
+  .vault-card { 
+    background: rgba(0, 0, 0, 0.7); 
+    border-left: 4px solid #f59e0b; 
+    padding: 22px; 
+    margin-top: 15px; 
+    border-radius: 8px;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
   }
-  .v-html { margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.6); border: 1px dashed rgba(245,158,11,0.3); border-radius: 4px; }
-  small { font-family: 'Share Tech Mono'; color: #888; font-size: 10px; overflow-wrap: break-word; display: block; }
+
+  .v-meta { font-family: 'Share Tech Mono'; font-size: 10px; color: #78350f; margin-bottom: 8px; }
+  .v-name { color: #f59e0b; font-size: 20px; font-weight: 700; }
+  
+  .v-action-btn { 
+    display: inline-block; 
+    background: transparent; 
+    color: #f59e0b; 
+    text-decoration: none; 
+    padding: 8px 18px; 
+    font-size: 12px; 
+    font-weight: 700; 
+    border: 1px solid #f59e0b;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono';
+    margin-top: 15px;
+    transition: 0.3s;
+  }
+
+  .v-action-btn:hover { background: #f59e0b; color: #000; }
+
+  .v-code-preview { 
+    background: #0a0805; 
+    border: 1px dashed #443311; 
+    padding: 10px; 
+    margin-top: 12px; 
+    font-size: 12px; 
+    color: #554422;
+  }
+
+  #auth-err { color: #ef4444; font-size: 12px; font-family: 'Share Tech Mono'; margin-top: 10px; text-align: center; }
 </style>
 </head>
 <body>
-  <div id="login-zone" class="panel">
-    <h2>🔐 VAULT_ACCESS</h2>
-    <input id="e" type="email" placeholder="Email">
-    <input id="p" type="password" placeholder="Password">
-    <button onclick="authAction('in')">LOG IN</button>
-    <button style="background:#333; color:#fff;" onclick="authAction('up')">NEW VAULT</button>
+  <div id="vault-auth" class="vault-panel">
+    <span class="v-header">// SECURE_VAULT_ACCESS</span>
+    <input id="vault-email" placeholder="Uplink ID (Email)">
+    <input id="vault-pass" type="password" placeholder="Encryption Key (Password)">
+    <button class="v-primary-btn" onclick="initAuth()">AUTHORIZE_ENTRY</button>
+    <div id="auth-err"></div>
   </div>
-  <div id="vault-zone" style="display:none">
-    <div class="panel">
-      <h2>VAULT_STORAGE</h2>
-      <input id="vn" placeholder="Entry Name">
-      <textarea id="vu" placeholder="URL or HTML Snippet"></textarea>
-      <button onclick="addVault()">STORE DATA</button>
-      <button style="background:#333; color:#fff;" onclick="signOut(auth)">LOCK VAULT</button>
+
+  <div id="vault-main" style="display:none">
+    <div class="vault-panel">
+      <span class="v-header">// VAULT_CONTROLS</span>
+      <input id="v-input-name" placeholder="Asset Name">
+      <textarea id="v-input-link" rows="2" placeholder="Secure Link / HTML Asset"></textarea>
+      <button class="v-primary-btn" onclick="commitToVault()">COMMIT_TO_VAULT</button>
+      <button style="background:transparent; color:#f59e0b; border:1px solid #443311; font-size:11px; margin-top:15px; width:100%; height:35px; cursor:pointer;" onclick="terminateSession()">TERMINATE_SESSION</button>
     </div>
-    <div id="v-list" style="margin-top:20px;"></div>
+    <div id="vault-feed"></div>
   </div>
 </body>
 </html>
-
