@@ -1,17 +1,16 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vault Node — Mylinks</title>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   import { getDatabase, ref, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  const firebaseConfig = {
+  const config = {
     apiKey: "AIzaSyD9v8tKBmSU9vqqgBO34yBMRrbHcFZFAs0",
     authDomain: "yoshiuniverse-6e0c9.firebaseapp.com",
     databaseURL: "https://yoshiuniverse-6e0c9-default-rtdb.firebaseio.com",
@@ -21,163 +20,238 @@
     appId: "1:645597342267:web:77b3b632310f86e198ca1e"
   };
 
-  const app = initializeApp(firebaseConfig);
+  const app = initializeApp(config);
   const auth = getAuth(app);
   const db = getDatabase(app);
 
-  onAuthStateChanged(auth, (user) => {
-    const login = document.getElementById('login-zone');
-    const vault = document.getElementById('vault-zone');
-    if (user) {
-      login.style.display = 'none';
-      vault.style.display = 'block';
-      loadVault(user.uid);
-    } else {
-      login.style.display = 'block';
-      vault.style.display = 'none';
+  let vaultData = [];
+
+  function logVault(msg, type = 'info') {
+    const log = document.getElementById('v-log');
+    if(!log) return;
+    const entry = document.createElement('div');
+    entry.style.color = type === 'error' ? '#ff4d4d' : type === 'warn' ? '#f59e0b' : '#f59e0b';
+    entry.textContent = `> ${msg}`;
+    log.prepend(entry);
+  }
+
+  async function triggerAtlasVault() {
+    logVault("VAULT_SCAN_STARTING...");
+    const suspicious = [];
+    const uid = auth.currentUser.uid;
+
+    for (let item of vaultData) {
+      if (item.url.startsWith('<')) continue;
+      try {
+        logVault(`CHECKING: ${item.name}`);
+        await fetch(item.url, { mode: 'no-cors' });
+      } catch(e) {
+        logVault(`SUSPICIOUS_ASSET: ${item.name}`, "warn");
+        suspicious.push(item);
+      }
+    }
+
+    for (let item of suspicious) {
+      try {
+        await fetch(item.url, { mode: 'no-cors' });
+      } catch(e) {
+        logVault(`IMPOSTER_REMOVED: ${item.name}`, "error");
+        await remove(ref(db, `users/${uid}/links/${item.id}`));
+      }
+    }
+    logVault("VAULT_INTEGRITY_VERIFIED.");
+  }
+
+  onAuthStateChanged(auth, user => {
+    document.getElementById('auth').style.display = user ? 'none' : 'block';
+    document.getElementById('vault').style.display = user ? 'block' : 'none';
+    if(user) {
+      onValue(ref(db, `users/${user.uid}/links`), snap => {
+        const feed = document.getElementById('feed');
+        feed.innerHTML = '';
+        vaultData = [];
+        snap.forEach(child => {
+          const d = child.val();
+          const val = d.anonLink || "";
+          vaultData.push({id: child.key, url: val, name: d.name});
+
+          const card = document.createElement('div');
+          card.className = 'card';
+          const isCode = val.trim().startsWith('<');
+          
+          card.innerHTML = `
+            <div class="name">${d.name}</div>
+            ${isCode ? 
+              `<div class="code-box">${val}</div>` : 
+              `<div class="v-iframe-box"><iframe src="${val}"></iframe></div>
+               <div style="margin-top:10px">
+                 <a href="${val}" target="_blank" class="btn">OPEN</a>
+                 <button onclick="navigator.clipboard.writeText('${val}')" class="btn" style="background:#333; color:#f59e0b; margin-left:5px">COPY</button>
+               </div>`
+            }
+          `;
+          feed.appendChild(card);
+        });
+      });
     }
   });
 
-  // Atlas Vault Scanner: Detects blocks and UI-incompatibility
-  async function atlasVaultPurge(uid, id, url) {
-    if (!url || url.trim().startsWith('<')) return;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
-      // mode: 'no-cors' allows us to ping blocked sites
-      await fetch(url, { mode: 'no-cors', signal: controller.signal });
-      clearTimeout(timeoutId);
-    } catch (err) {
-      console.warn(`[ATLAS_VAULT] Purging dead link: ${id}`);
-      remove(ref(db, `users/${uid}/links/${id}`));
-    }
-  }
-
-  function loadVault(uid) {
-    onValue(ref(db, `users/${uid}/links`), (snap) => {
-      const list = document.getElementById('v-list');
-      list.innerHTML = '';
-      
-      if (!snap.exists()) {
-        list.innerHTML = '<div style="text-align:center; opacity:0.5; font-family:\'Share Tech Mono\'">VAULT_STORAGE_EMPTY</div>';
-        return;
-      }
-
-      snap.forEach(child => {
-        const d = child.val();
-        const targetContent = d.anonLink || ""; 
-        const card = document.createElement('div');
-        card.className = 'v-card';
-        const isHtml = targetContent.trim().startsWith('<');
-        
-        if (isHtml) {
-          card.innerHTML = `
-            <div class="v-header"><strong>${d.name}</strong> <span class="v-tag">CODE_ASSET</span></div>
-            <div class="v-html-container">${targetContent}</div>
-          `;
-        } else {
-          card.innerHTML = `
-            <div class="v-header"><strong>${d.name}</strong> <span class="v-tag">LINK_ASSET</span></div>
-            <div class="v-iframe-container">
-              <iframe src="${targetContent}" loading="lazy" onload="this.style.height=this.contentWindow.document.body.scrollHeight + 'px';"></iframe>
-            </div>
-            <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
-               <a href="${targetContent}" target="_blank" class="v-btn">LAUNCH</a>
-               <small>${targetContent.substring(0, 40)}...</small>
-            </div>
-          `;
-          atlasVaultPurge(uid, child.key, targetContent);
-        }
-        list.appendChild(card);
-      });
-    });
-  }
-
-  window.authAction = (t) => {
-    const e = document.getElementById('e').value;
-    const p = document.getElementById('p').value;
-    if(t === 'in') {
-      signInWithEmailAndPassword(auth, e, p).catch(err => alert("AUTH_ERROR: " + err.message));
-    } else {
-      createUserWithEmailAndPassword(auth, e, p).catch(err => alert("REG_ERROR: " + err.message));
-    }
-  };
-
-  window.addVault = () => {
+  window.login = () => signInWithEmailAndPassword(auth, document.getElementById('e').value, document.getElementById('p').value);
+  window.add = () => {
     const n = document.getElementById('vn').value;
-    const u = document.getElementById('vu').value;
-    if(n && u && auth.currentUser) {
-      push(ref(db, `users/${auth.currentUser.uid}/links`), { 
-        name: n, 
-        anonLink: u,
-        addedAt: Date.now() 
-      }).then(() => {
-        document.getElementById('vn').value = '';
-        document.getElementById('vu').value = '';
-      });
-    }
+    const l = document.getElementById('vl').value;
+    if(n && l) push(ref(db, `users/${auth.currentUser.uid}/links`), { name: n, anonLink: l });
   };
+  window.triggerAtlasVault = triggerAtlasVault;
+  window.logout = () => signOut(auth);
 </script>
 <style>
+  /* Base Styles with Scrolling Enabled */
   body { 
-    margin: 0; padding: 20px;
-    background: transparent;
-    color: #fff; font-family: 'Rajdhani', sans-serif;
+    font-family: 'Rajdhani', sans-serif; 
+    color: #fff; 
+    background: transparent; 
+    padding: 10px; 
+    margin: 0;
+    overflow-y: auto; /* Enable page-level scrolling */
+    min-height: 100vh;
   }
+
   .panel { 
-    background: rgba(20, 15, 5, 0.95); border: 1px solid #f59e0b; 
-    padding: 25px; border-radius: 12px; max-width: 500px; 
-    margin: 0 auto; backdrop-filter: blur(10px);
+    background: rgba(20, 15, 5, 0.95); 
+    border: 1px solid #f59e0b; 
+    padding: 20px; 
+    border-radius: 12px; 
+    margin: 0 auto 20px auto; 
+    max-width: 500px;
+    /* Adjusted mask to allow scrolling through the bottom fade */
     mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
   }
-  h2 { color:#f59e0b; margin-top:0; font-family: 'Share Tech Mono'; letter-spacing: 2px; text-align: center; }
+  
+  .v-terminal { 
+    background: #000; 
+    color: #f59e0b; 
+    padding: 10px; 
+    font-family: 'Share Tech Mono'; 
+    font-size: 10px; 
+    height: 80px; 
+    overflow-y: auto; 
+    border: 1px solid #443311; 
+    margin-bottom: 15px; 
+  }
+
+  .atlas-v-btn { 
+    background: #f59e0b; 
+    color: #000; 
+    border: none; 
+    padding: 8px; 
+    width: 100%; 
+    margin-bottom: 15px; 
+    font-family: 'Share Tech Mono'; 
+    font-weight: bold; 
+    cursor: pointer; 
+  }
+
   input, textarea { 
-    width: 100%; background: #000; color: #f59e0b; border: 1px solid #443311; 
-    padding: 12px; margin: 8px 0; border-radius: 4px; box-sizing: border-box; 
-    font-family: 'Share Tech Mono'; outline: none;
+    width: 100%; 
+    background: #000; 
+    color: #f59e0b; 
+    border: 1px solid #443311; 
+    padding: 10px; 
+    margin: 5px 0; 
+    border-radius: 4px; 
+    font-family: 'Share Tech Mono'; 
+    box-sizing: border-box; 
   }
-  button { 
-    width: 100%; background: #f59e0b; color: #000; border: none; 
-    padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; 
-    margin-top: 10px; font-family: 'Share Tech Mono'; text-transform: uppercase;
+
+  .main-btn { 
+    width: 100%; 
+    background: #f59e0b; 
+    border: none; 
+    padding: 12px; 
+    font-weight: bold; 
+    cursor: pointer; 
+    font-family: 'Share Tech Mono'; 
   }
-  .v-card { 
-    border-left: 3px solid #f59e0b; padding: 20px; margin-top: 20px; 
-    background: rgba(0,0,0,0.6); border-radius: 8px; 
-    border-top: 1px solid rgba(245,158,11,0.1);
-    border-right: 1px solid rgba(245,158,11,0.1);
+
+  /* Feed Container */
+  #feed {
+    padding-bottom: 100px; /* Space at bottom so last card is visible */
   }
-  .v-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-  .v-tag { font-size: 9px; padding: 2px 6px; background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 3px; color: #f59e0b; }
-  
-  .v-iframe-container { width: 100%; height: 350px; background: #000; border-radius: 4px; overflow: hidden; border: 1px solid #222; }
-  iframe { width: 100%; height: 100%; border: none; background: #fff; }
-  
-  .v-html-container { padding: 15px; background: #050505; border: 1px dashed rgba(245,158,11,0.3); border-radius: 4px; max-height: 400px; overflow-y: auto; }
-  
-  .v-btn { display: inline-block; background: #f59e0b; color: #000; text-decoration: none; padding: 6px 15px; font-weight: bold; font-size: 11px; border-radius: 4px; font-family: 'Share Tech Mono'; }
-  small { font-family: 'Share Tech Mono'; color: #666; font-size: 10px; overflow-wrap: break-word; }
+
+  .card { 
+    background: rgba(0,0,0,0.8); 
+    border-left: 4px solid #f59e0b; 
+    padding: 20px; 
+    margin-top: 15px; 
+    border-radius: 8px; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  }
+
+  .name { 
+    color: #f59e0b; 
+    font-size: 18px; 
+    margin-bottom: 10px; 
+    font-weight: 700; 
+    text-transform: uppercase; 
+  }
+
+  .v-iframe-box { 
+    width: 100%; 
+    height: 300px; 
+    background: #fff; 
+    border-radius: 4px; 
+    overflow: hidden; 
+  }
+
+  iframe { 
+    width: 100%; 
+    height: 100%; 
+    border: none; 
+  }
+
+  .btn { 
+    display: inline-block; 
+    background: #f59e0b; 
+    color: #000; 
+    text-decoration: none; 
+    padding: 6px 15px; 
+    font-size: 11px; 
+    font-weight: bold; 
+    border-radius: 3px; 
+    font-family: 'Share Tech Mono'; 
+    border: none; 
+    cursor: pointer; 
+  }
+
+  .code-box { 
+    background: #0a0a0a; 
+    padding: 15px; 
+    border: 1px dashed #443311; 
+    border-radius: 6px; 
+    overflow-x: auto;
+  }
 </style>
 </head>
 <body>
-  <div id="login-zone" class="panel">
-    <h2>VAULT_INIT</h2>
-    <input id="e" type="email" placeholder="IDENTITY_EMAIL">
-    <input id="p" type="password" placeholder="SECURITY_KEY">
-    <button onclick="authAction('in')">ACCESS_VAULT</button>
-    <button style="background:transparent; color:#f59e0b; border: 1px solid #443311;" onclick="authAction('up')">GENERATE_NEW_VAULT</button>
+  <div id="auth" class="panel">
+    <h3 style="color:#f59e0b; text-align:center; font-family:'Share Tech Mono'">VAULT_AUTHORIZATION</h3>
+    <input id="e" placeholder="EMAIL">
+    <input id="p" type="password" placeholder="KEY">
+    <button class="main-btn" onclick="login()">AUTHORIZE</button>
   </div>
-  <div id="vault-zone" style="display:none">
+  
+  <div id="vault" style="display:none">
     <div class="panel">
-      <h2>VAULT_MANAGEMENT</h2>
-      <input id="vn" placeholder="ASSET_IDENTIFIER">
-      <textarea id="vu" placeholder="PASTE_URL_OR_SOURCE_CODE"></textarea>
-      <button onclick="addVault()">COMMIT_TO_VAULT</button>
-      <button style="background:transparent; color:#f59e0b; border: 1px solid #443311; font-size:10px;" onclick="signOut(auth)">TERMINATE_SESSION</button>
+      <div class="v-terminal" id="v-log"><div>VAULT_READY</div></div>
+      <button id="atlas-v-trigger" class="atlas-v-btn" onclick="triggerAtlasVault()">ACTIVATE_VAULT_SCAN</button>
+      <input id="vn" placeholder="Label">
+      <textarea id="vl" placeholder="URL/Code"></textarea>
+      <button class="main-btn" onclick="add()">COMMIT_TO_VAULT</button>
+      <button style="background:transparent; color:#f59e0b; border:none; margin-top:10px; font-size:10px; cursor:pointer;" onclick="logout()">TERMINATE_SESSION</button>
     </div>
-    <div id="v-list" style="margin-top:20px;"></div>
+    <div id="feed"></div>
   </div>
 </body>
 </html>
